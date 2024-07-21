@@ -23,10 +23,10 @@ class target(ProcessorBase):
             return
         
         serial_num = payload['unitID']
-        try: serial_num = int(serial_num)
-        except: 
-            logging.warning("Unit ID is not an integer - skipping processing")
-            return
+        # try: serial_num = int(serial_num)
+        # except: 
+        #     logging.warning("Unit ID is not an integer - skipping processing")
+        #     return
 
         agents = self.api.get_agent_list()
         logging.info(str(len(agents)) + " accessible agents to process")
