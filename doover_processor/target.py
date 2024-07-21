@@ -16,10 +16,12 @@ class target(ProcessorBase):
 
         self.include_vocs = False
 
-        # Get the required channels
+        # Get the required channels        
         self.ui_state_channel = self.api.create_channel("ui_state", self.agent_id)
         self.ui_cmds_channel = self.api.create_channel("ui_cmds", self.agent_id)
         self.location_channel = self.api.create_channel("location", self.agent_id)
+
+        self.uplink_channel = self.api.create_channel("farmo_uplink_recv", self.agent_id)
 
         ## Construct the UI
         self._ui_elements = construct_ui()

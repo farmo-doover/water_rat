@@ -6,7 +6,7 @@ const ConcatenatePlugin = require('./ConcatPlugin');
 
 
 module.exports = {
-  entry: './src/RemoteComponent.js',
+  entry: './src/WaterRatElement.js',
   mode: 'development',
   // mode: 'production',
 
@@ -41,13 +41,13 @@ module.exports = {
   },
   plugins: [
     new ModuleFederationPlugin({
-      name: 'WaterRatUi',
-      filename: 'WaterRatUi.js',
+      name: 'WaterRatElement',
+      filename: 'WaterRatElement.js',
       remotes: {
         doover_home : 'doover_home@[window.dooverRemoteAccess_remoteUrl]'
       },
       exposes: {
-        './WaterRatUi': './src/RemoteComponent',
+        './WaterRatElement': './src/WaterRatElement',
       },
       // adds react as shared module
       // version is inferred from package.json
@@ -68,7 +68,7 @@ module.exports = {
     new ConcatenatePlugin({
       source: "./dist",
       destination: "../assets/",
-      name: 'WaterRatUi.js',
+      name: 'WaterRatElement.js',
       ignore: 'main.js'
     }),
     new ExternalTemplateRemotesPlugin(),

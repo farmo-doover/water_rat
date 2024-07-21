@@ -42,7 +42,7 @@ export default class RemoteComponent extends RemoteAccess{
 
     render() {
 
-        let rotation = 20;
+        let rotation = 7;
 
         let message = "All is good";
         let message_colour = "green";
