@@ -7,8 +7,8 @@ from pydoover import ui
 def construct_ui():
 
     ui_elems = (
-        ui.RemoteComponent("waterRatElement", "Water Rat", component_url="WaterRatElement"),
         ui.AlertStream("significantEvents", "Notify me of any problems"),
+        ui.RemoteComponent("waterRatElement", "Water Rat", component_url="WaterRatElement"),
         ui.NumericVariable("waterRatAngle", "Angle (°)",
             dec_precision=0,
             form=ui.Widget.radial,
