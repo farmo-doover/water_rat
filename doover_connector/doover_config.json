@@ -1,0 +1,25 @@
+{
+    "processor_deployments" : {
+        "processors" : [
+            {
+                "name" : "farmo_processor",
+                "processor_package_dir" : "./"
+            }
+        ],
+        "tasks" : [
+            {
+                "name" : "on_farmo_connector_recv",
+                "processor_name" : "farmo_processor",
+                "task_config" : {
+                    "message_type": "CONNECTOR_RECV"
+                },
+                "subscriptions" : [
+                    {
+                        "channel_name" : "farmo_connector_recv",
+                        "is_active" : true
+                    }
+                ]
+            }
+        ]
+    }
+}
