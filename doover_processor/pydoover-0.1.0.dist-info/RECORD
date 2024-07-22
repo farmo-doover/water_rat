@@ -2,7 +2,7 @@ pydoover-0.1.0.dist-info/INSTALLER,sha256=zuuue4knoyJ-UwPPXg8fezS7VCrXJQrAP7zeNu
 pydoover-0.1.0.dist-info/METADATA,sha256=4RgIIJWshNLBtRjOM6r1a9Bt3902qPr9txcEZvV9N3s,621
 pydoover-0.1.0.dist-info/RECORD,,
 pydoover-0.1.0.dist-info/REQUESTED,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0
-pydoover-0.1.0.dist-info/WHEEL,sha256=rWxmBtp7hEUqVLOnTaDOPpR-cZpCDkzhhcBce-Zyd5k,91
+pydoover-0.1.0.dist-info/WHEEL,sha256=Wyh-_nZ0DJYolHNn1_hMa4lM7uDedD_RGVwbmTjyItk,91
 pydoover-0.1.0.dist-info/direct_url.json,sha256=ZTQU91fUptYOunfpiwO0rQ2eChp8x6dvBemBec6JeGw,58
 pydoover-0.1.0.dist-info/top_level.txt,sha256=_reL_cTBWIJleX97k0dezw2FXmL4K1WZYZebvV1pKXo,9
 pydoover/__init__.py,sha256=8-CWAE7IDZyd6RCt9iS9ySOHkIOg1klR-oR_3ROHrlQ,114
@@ -129,7 +129,7 @@ pydoover/ui/__pycache__/variable.cpython-311.pyc,,
 pydoover/ui/element.py,sha256=FcTVHykclHLiEcM_jcEkvVsJCjpmjio_WrZBl94mrBI,6470
 pydoover/ui/example.py,sha256=89LQLXhBFMdIlNXhDSsqxeou4csN0a27rdYR1S8uQVw,13507
 pydoover/ui/interaction.py,sha256=0--NsJ0eHB2N1OmEVe-shzxsG_QN07h7T-CCPU445lc,8322
-pydoover/ui/manager.py,sha256=4CPcm1ptuEIUhMJmzwRoKYOzax2sSmcixm5AIc7dMLM,18414
+pydoover/ui/manager.py,sha256=Is-iUi84rCCjtiIDmEsyBYHVpZWtURLVNBoeCKCPro4,18674
 pydoover/ui/misc.py,sha256=lGwS5RCO6ARrPGcnscgS_KiYpsCJaMQkCUF3_zgFXG8,1857
 pydoover/ui/parameter.py,sha256=bDiIwAKmwF08UbkFQ4E2yGg45-bZpuG3Hlp7WRUlQAM,4011
 pydoover/ui/submodule.py,sha256=EPGcUAJkVYt1fKLV200jtk-icpHRJVh6Yc0ZxQzt_p4,4238

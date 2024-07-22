@@ -324,7 +324,7 @@ class UIManager:
         # self._set_new_ui_cmds(ui_cmds_agg)
         self.on_command_update(None, ui_cmds_agg)
 
-    def push(self, record_log: bool = True, should_remove: bool = True, timestamp: Optional[datetime] = None) -> bool:
+    def push(self, record_log: bool = True, should_remove: bool = True, timestamp: Optional[datetime] = None, even_if_empty: bool = False) -> bool:
         # self.check_dda()
         if self._has_persistent_connection:
             if not self._is_conn_ready():
@@ -344,7 +344,7 @@ class UIManager:
         else:
             self.pull()  # do a pull before HTTP client pushes anything...
 
-        print("pushing...")
+        log.info("pushing...")
         commands_update = self._get_commands_update()
         if commands_update is not None:
             ui_cmds_msg = {"cmds": commands_update}
@@ -353,6 +353,11 @@ class UIManager:
         ui_state_update = self._get_ui_state_update(should_remove=should_remove)
         if ui_state_update is not None:
             self._publish_to_channel("ui_state", ui_state_update, record_log=record_log, timestamp=timestamp)
+        elif even_if_empty:
+            log.info("pushing empty ui state")
+            self._publish_to_channel("ui_state", {}, record_log=record_log, timestamp=timestamp)
+        else:
+            log.info("not pushing empty ui state")
 
         self._last_pushed_time = time.time()
         self._has_critical_interaction_pending = False

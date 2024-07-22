@@ -9,13 +9,10 @@ import { maxWidth } from '@mui/system';
 class RotatingSVG extends Component {
     constructor(props) {
       super(props);
-      this.state = {
-        rotation: props.rotation || 0, // Default to 0 if no rotation prop is provided
-      };
     }
-  
+
     render() {
-      const { rotation } = this.state;
+      const rotation = this.props.rotation || 0;
   
       const svgStyle = {
         transform: `rotate(${rotation}deg)`,
@@ -39,17 +36,18 @@ export default class RemoteComponent extends RemoteAccess{
         }
     }
 
+    getValue(){ return this.props.ui_element_props.ui_state.reported.currentValue }
 
     render() {
 
-        let rotation = 7;
+        let rotation = this.getValue();
 
         let message = "All is good";
         let message_colour = "green";
 
         if (rotation >= 30){
             message = "Houston,\nWe have a problem";
-            message_colour = "red";
+            message_colour = "#f7ad00";
         }
 
         return (
@@ -60,7 +58,7 @@ export default class RemoteComponent extends RemoteAccess{
                     <RotatingSVG rotation={rotation} /> {/* Rotates the SVG by 45 degrees */}
                 </div>
                 <div style={{ width: '50%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-                    <h1 style={{ margin: 'auto' }}>{rotation}°</h1>
+                    {/* <h1 style={{ margin: 'auto' }}>{rotation}°</h1> */}
                     <h2 style={{ marginLeft: '20px', marginRight: '20px', color: message_colour, whiteSpace: 'pre-wrap', textAlign: 'center' }}>{message}</h2>
                 </div>
             </div>

@@ -7,23 +7,24 @@ from pydoover import ui
 def construct_ui():
 
     ui_elems = (
-        ui.AlertStream("significantEvents", "Notify me of any problems"),
-        ui.RemoteComponent("waterRatElement", "Water Rat", component_url="WaterRatElement"),
-        ui.NumericVariable("waterRatAngle", "Angle (°)",
-            dec_precision=0,
-            form=ui.Widget.radial,
-            ranges=[
-                ui.Range("Ok", 0, 30, ui.Colour.green),
-                ui.Range("Not Good", 30, 90, ui.Colour.yellow),
-            ],
-        ),
+        ui.AlertStream("significantEvent", "Notify me of any problems"),
+        # ui.RemoteComponent("waterRatElement", "Water Rat", component_url="WaterRatElement"),
+        ui.NumericVariable("waterRatElement", "Water Rat", component_url="WaterRatElement"),
+        ui.BooleanVariable("waterRatStatus", "All Good?"),
         ui.NumericVariable("batteryVoltage", "Battery Voltage (V)",
             dec_precision=1,
             ranges=[
-                ui.Range("Low", 5.2, 5.8, ui.Colour.yellow),
-                ui.Range("Ok", 5.8, 6.4, ui.Colour.blue),
-                ui.Range("Charging", 6.4, 7.0, ui.Colour.green),
-                ui.Range("High", 7.0, 7.2, ui.Colour.red),
+                ui.Range("Low", 2.5, 3.0, ui.Colour.yellow),
+                ui.Range("Ok", 3.0, 3.3, ui.Colour.blue),
+                ui.Range("Good", 3.3, 3.6, ui.Colour.green),
+            ],
+        ),
+        ui.NumericVariable("signalStrength", "Signal Strength (%)",
+            dec_precision=0,
+            ranges=[
+                ui.Range("Poor", 0, 30, ui.Colour.red),
+                ui.Range("Ok", 30, 60, ui.Colour.blue),
+                ui.Range("Good", 60, 100, ui.Colour.green),
             ],
         ),
         ui.ConnectionInfo(name="connectionInfo",
