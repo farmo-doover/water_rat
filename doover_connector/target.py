@@ -32,8 +32,8 @@ class target(ProcessorBase):
         logging.info(str(len(agents)) + " accessible agents to process")
 
         for a in agents:
-            if a.deployment_config is not None and 'FARMO_ID' in a.deployment_config:
-                if serial_num == a.deployment_config['FARMO_ID']:
+            if a.deployment_config is not None and 'FARMO_IMEI' in a.deployment_config:
+                if serial_num == a.deployment_config['FARMO_IMEI']:
                     agent_key = a.agent_id
                     logging.info('Found agent ' + str(agent_key) + " with matching serial number " + str(serial_num))
 
@@ -46,4 +46,4 @@ class target(ProcessorBase):
                     logging.info("Published to farmo_uplink_recv channel")
                     return
 
-        logging.warning("Did not find an agent with matching FARMO_ID == " + str(serial_num) + " in deployment config")
+        logging.warning("Did not find an agent with matching FARMO_IMEI == " + str(serial_num) + " in deployment config")
