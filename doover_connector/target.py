@@ -7,7 +7,6 @@ from pydoover.cloud import ProcessorBase, Channel
 
 class target(ProcessorBase):
 
-
     def setup(self):
         ## Do any setup you would like to do here
         pass
@@ -31,19 +30,19 @@ class target(ProcessorBase):
         agents = self.api.get_agent_list()
         logging.info(str(len(agents)) + " accessible agents to process")
 
+        matched_agents = []
+
         for a in agents:
             if a.deployment_config is not None and 'FARMO_IMEI' in a.deployment_config:
                 if serial_num == a.deployment_config['FARMO_IMEI']:
                     agent_key = a.agent_id
                     logging.info('Found agent ' + str(agent_key) + " with matching serial number " + str(serial_num))
+                    matched_agents.append(agent_key)
 
-                    self.api.publish_to_channel_name(
-                        agent_id=agent_key,
-                        channel_name="farmo_uplink_recv",
-                        data=json.dumps(payload)
-                    )
-
-                    logging.info("Published to farmo_uplink_recv channel")
-                    return
-
-        logging.warning("Did not find an agent with matching FARMO_IMEI == " + str(serial_num) + " in deployment config")
+        if len(matched_agents) > 0:
+            for agent_key in matched_agents:
+                channel = Channel(agent_key)
+                channel.send_message(json.dumps(payload))
+                logging.info("Sent message to agent " + str(agent_key) + " with payload " + str(payload))
+        else:
+            logging.warning("Did not find an agent with matching FARMO_IMEI == " + str(serial_num) + " in deployment config")
