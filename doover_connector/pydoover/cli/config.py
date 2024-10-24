@@ -58,9 +58,10 @@ class ConfigEntry:
         )
 
     def format(self):
+        password = self.password or ""
         return (f"[profile={self.profile or ''}]\n"
                 f"USERNAME={self.username or ''}\n"
-                f"PASSWORD={base64.b64encode(self.password.encode('utf-8')).decode('utf-8') or ''}\n"
+                f"PASSWORD={base64.b64encode(password.encode('utf-8')).decode('utf-8') or ''}\n"
                 f"TOKEN={self.token or ''}\n"
                 f"TOKEN_EXPIRES={self.token_expires and self.token_expires.timestamp() or ''}\n"
                 f"AGENT_ID={self.agent_id or ''}\n"
@@ -91,6 +92,10 @@ class ConfigManager:
         with open(self.filepath, "r") as fp:
             contents = fp.read()
 
+        if len(contents) == 0:
+            # protect against empty file
+            return
+
         self.parse(contents)
 
     def parse(self, contents):
@@ -102,8 +107,9 @@ class ConfigManager:
         if not os.path.exists(self.directory):
             os.mkdir(self.directory)
 
+        fmt = self.dump()  # do this here, so we don't write in case something breaks in formatting config
         with open(self.filepath, "w") as fp:
-            fp.write(self.dump())
+            fp.write(fmt)
 
     def dump(self):
         return "\n\n".join(e.format() for e in self.entries.values())

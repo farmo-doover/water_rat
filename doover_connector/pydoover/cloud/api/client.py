@@ -39,11 +39,12 @@ class Client:
         token: str = None,
         token_expires: datetime = None,
         base_url: str = "https://my.doover.dev",
+        agent_id: str = None,
         verify: bool = True,
         login_callback: Callable = None,
     ):
         self.access_token = AccessToken(token, token_expires)
-        self.agent_id = None
+        self.agent_id = agent_id
         self.login_callback = login_callback
 
         self.username = username
@@ -52,6 +53,9 @@ class Client:
         self.verify = verify
         self.base_url = base_url
         self.session = requests.Session()
+
+        self.request_retries = 1
+        self.request_timeout = 25
 
         if not ((username and password) or token):
             raise RuntimeError("Must have username and password or access token set.")
@@ -70,17 +74,33 @@ class Client:
 
         url = self.base_url + route.url
 
-        log.debug(f"Making {route.method} request to {url} with kwargs {kwargs}")
-        resp = self.session.request(route.method, url, **kwargs)
-        # resp.raise_for_status()
+        attempt_counter = 0
+        retries = self.request_retries if route.method == "GET" else 0
 
-        if resp.status_code == 403:
-            raise Forbidden("Access denied.")
-        elif resp.status_code == 404:
-            raise NotFound("Resource not found.")
-        elif resp.status_code != 200:
-            log.info(f"Failed to make request to {url}. Status code: {resp.status_code}, message: {resp.text}")
-            raise HTTPException(resp.text)
+        while attempt_counter <= retries:
+            attempt_counter += 1
+
+            log.debug(f"Making {route.method} request to {url} with kwargs {kwargs}")
+            
+            try:
+                resp = self.session.request(route.method, url, timeout=self.request_timeout, **kwargs)
+            except requests.exceptions.Timeout:
+                log.info(f"Request to {url} timed out.")
+                if attempt_counter > retries:
+                    raise HTTPException(f"Request timed out. {url}")
+                continue
+
+            if resp.status_code == 200:
+                ## if we get a 200, we're good to go
+                break
+            elif resp.status_code == 403:
+                raise Forbidden(f"Access denied. {url}")
+            elif resp.status_code == 404:
+                raise NotFound(f"Resource not found. {url}")
+            elif resp.status_code != 200:
+                log.info(f"Failed to make request to {url}. Status code: {resp.status_code}, message: {resp.text}")
+                if attempt_counter > retries:
+                    raise HTTPException(resp.text)
 
         try:
             data = resp.json()
@@ -91,7 +111,7 @@ class Client:
         return data
 
     def _get_agent_raw(self, agent_id: str) -> dict[str, Any]:
-        return self.request(Route("GET", "/ch/v1/agent/{}", agent_id))
+        return self.request(Route("GET", "/ch/v1/agent/{}/", agent_id))
 
     def _get_agent_list_raw(self) -> list[dict[str, Any]]:
         return self.request(Route("GET", "/ch/v1/list_agents/"))
@@ -115,21 +135,25 @@ class Client:
             return Channel(client=self, data=data)
 
     def _get_channel_raw(self, channel_id: str) -> dict[str, Any]:
-        return self.request(Route("GET", "/ch/v1/channel/{}", channel_id))
+        return self.request(Route("GET", "/ch/v1/channel/{}/", channel_id))
 
     def get_channel(self, channel_id: str) -> Optional[T]:
         data = self._get_channel_raw(channel_id)
         return data and self._parse_channel(data)
 
     def _get_channel_named_raw(self, channel_name: str, agent_id: str) -> dict[str, Any]:
-        return self.request(Route("GET", "/ch/v1/agent/{}/{}", agent_id, channel_name))
+        return self.request(Route("GET", "/ch/v1/agent/{}/{}/", agent_id, channel_name))
 
     def get_channel_named(self, channel_name: str, agent_id: str) -> Optional[T]:
         data = self._get_channel_named_raw(channel_name, agent_id)
         return data and self._parse_channel(data)
 
-    def get_channel_messages(self, channel_id: str) -> list[Message]:
-        data = self.request(Route("GET", "/ch/v1/channel/{}/messages", channel_id))
+    def get_channel_messages(self, channel_id: str, num_messages: Optional[int] = None) -> list[Message]:
+        if num_messages:
+            data = self.request(Route("GET", "/ch/v1/channel/{}/messages/{}/", channel_id, str(num_messages)))
+        else:
+            data = self.request(Route("GET", "/ch/v1/channel/{}/messages/", channel_id))
+
         if not data:
             return []
 
@@ -175,18 +199,49 @@ class Client:
     def unsubscribe_from_channel(self, channel_id: str, task_id: str) -> bool:
         return self._maybe_subscribe_to_channel(channel_id, task_id, False)
 
-    def publish_to_channel(self, channel_id: str, data: Any, save_log: bool = True, log_aggregate: bool = False):
+    def publish_to_channel(self, channel_id: str, data: Any, save_log: bool = True, log_aggregate: bool = False, override_aggregate: bool = False, timestamp: Optional[datetime] = None):
         # basically we're assuming there's only 2 types of data - dict or string...
-        if isinstance(data, dict):
-            return self.request(Route("POST", "/ch/v1/channel/{}/", channel_id), json=data)
-        else:
-            return self.request(Route("POST", "/ch/v1/channel/{}/", channel_id), data=str(data))
+        post_data = {"msg": data}
+        
+        post_data["record_log"] = save_log
+        if log_aggregate:
+            post_data["log_aggregate"] = True
+        if override_aggregate:
+            post_data["override_aggregate"] = True
+        if timestamp:
+            post_data["timestamp"] = int(timestamp.timestamp())
 
-    def publish_to_channel_name(self, agent_id: str, channel_name: str, data: Any, save_log: bool = True, log_aggregate: bool = False):
-        if isinstance(data, dict):
-            return self.request(Route("POST", "/ch/v1/agent/{}/{}/", agent_id, channel_name), json=data)
+        if isinstance(post_data, dict):
+            return self.request(Route("POST", "/ch/v1/channel/{}/", channel_id), json=post_data)
         else:
-            return self.request(Route("POST", "/ch/v1/agent/{}/{}/", agent_id, channel_name), data=str(data))
+            return self.request(Route("POST", "/ch/v1/channel/{}/", channel_id), data=str(post_data))
+
+    def publish_to_channel_name(self, agent_id: str, channel_name: str, data: Any, save_log: bool = True, log_aggregate: bool = False, override_aggregate: bool = False, timestamp: Optional[datetime] = None):
+        post_data = {"msg": data}
+        
+        post_data["record_log"] = save_log
+        if log_aggregate:
+            post_data["log_aggregate"] = True
+        if override_aggregate:
+            post_data["override_aggregate"] = True
+        if timestamp:
+            post_data["timestamp"] = int(timestamp.timestamp())
+        
+        if isinstance(post_data, dict):
+            return self.request(Route("POST", "/ch/v1/agent/{}/{}/", agent_id, channel_name), json=post_data)
+        else:
+            return self.request(Route("POST", "/ch/v1/agent/{}/{}/", agent_id, channel_name), data=str(post_data))
+
+    def create_tunnel_endpoints(self, agent_id: str, endpoint_type: str, amount: int):
+        to_return = []
+        for i in range(amount):
+            res = self.request(Route("POST", "/ch/v1/agent/{}/ngrok_tunnels/{}/", agent_id, endpoint_type))
+            if res and res.get("url"):
+                to_return.append(res["url"])
+        return to_return
+
+    def get_tunnel_endpoints(self, agent_id: str, endpoint_type: str):
+        return self.request(Route("GET", "/ch/v1/agent/{}/ngrok_tunnels/{}/", agent_id, endpoint_type))
 
     def login(self):
         if not (self.username or self.password):
@@ -208,7 +263,7 @@ class Client:
 
         # bit of a hack... don't know a better way? Two-Factor is the title on the page...
         if "Two-Factor" in res.text:
-            print("Your account has 2FA enabled. It is recommended to instead use `pydoover configure token` "
+            print("Your account has 2FA enabled. It is recommended to instead use `doover configure_token` "
                   "and use a long-lived token, otherwise you will have to 2FA authenticate every 20min.\n"
                   "Quit and run that command, or supply your 2FA code to authenticate now.\n")
 

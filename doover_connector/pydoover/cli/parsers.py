@@ -8,6 +8,7 @@ def processor_name(name: str) -> str:
 def task_name(name: str) -> str:
     return "!" + name.lstrip("!")
 
+
 def maybe_json(data: str):
     try:
         return json.loads(data)
@@ -19,3 +20,8 @@ def maybe_json(data: str):
         return maybe_json(data.replace("'", '"'))
 
     return data
+
+
+class BoolFlag:
+    def __call__(self, *args, **kwargs):
+        return

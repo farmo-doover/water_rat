@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 import os, sys, time, json, traceback, logging
 
-from pydoover.cloud import ProcessorBase, Channel
+from pydoover.cloud.processor import ProcessorBase
 # from pydoover.cloud import Client
 
 
@@ -12,6 +12,19 @@ class target(ProcessorBase):
         pass
 
     def process(self):
+
+        if self.message is None:
+            logging.error("No message to process")
+            return 
+
+            ## Only do the following for testing, otherwise we could end up with double messages
+            logging.error("No message to process - retreiving from channel")
+            ## get the last message from the channel
+            self.uplink_channel = self.api.create_channel("farmo_connector_recv", self.agent_id)
+            self.message = self.uplink_channel.last_message
+            if self.message is None:
+                logging.error("No message to process")
+                return
 
         payload = self.message.fetch_payload()
         if not isinstance(payload, dict):
@@ -41,8 +54,8 @@ class target(ProcessorBase):
 
         if len(matched_agents) > 0:
             for agent_key in matched_agents:
-                channel = Channel(agent_key)
-                channel.send_message(json.dumps(payload))
+                channel = self.api.create_channel("farmo_uplink_recv", agent_key)
+                channel.publish(json.dumps(payload))
                 logging.info("Sent message to agent " + str(agent_key) + " with payload " + str(payload))
         else:
             logging.warning("Did not find an agent with matching FARMO_IMEI == " + str(serial_num) + " in deployment config")

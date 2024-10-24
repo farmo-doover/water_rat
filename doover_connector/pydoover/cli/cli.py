@@ -3,25 +3,54 @@ import inspect
 import json
 import os
 import pathlib
+import platform
+import re
+import shutil
+import stat
+import tarfile
 import time
 import traceback
+import uuid
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from datetime import datetime, timedelta
 from getpass import getpass
 from typing import Optional
 
+import requests
+
+try:
+    from fuzzywuzzy import process
+    from simple_term_menu import TerminalMenu
+except ImportError:
+    process = None
+    TerminalMenu = None
+    print("Fuzzywuzzy and/or simple_term_menu not installed. CLI functionality may be limited.")
+
 from . import parsers
 from .. import __version__
-from ..cloud import Processor
 from ..cloud.api import Client, Forbidden, NotFound
-from ..cloud.api.channel import Task
+from ..cloud.api.channel import Processor, Task
+from ..cloud.api.message import Message
 
 from .config import ConfigEntry, ConfigManager, NotSet
 from .decorators import command, annotate_arg
 
 
+S3_CLI_PATH = "https://doover-cli.s3.ap-southeast-2.amazonaws.com/doover-{os}-{arch}.tar.gz"
+S3_CLI_PATH_ONEFILE = "https://doover-cli.s3.ap-southeast-2.amazonaws.com/doover-{os}-{arch}"
+BIN_FP = "/usr/local/bin/doover"
+CLI_DIR_PATH = "/usr/local/doover-cli"
+
+DEFAULT_HTTP_DOMAIN = "n1.doover.ngrok.app"
+DEFAULT_TCP_DOMAIN = "1.tcp.au.ngrok.io:27735"
+TUNNEL_URI_MATCH = re.compile(r"(?P<protocol>(tcp|https))://(?P<host>.*):(?P<port>.*)")
+KEY_MATCH = re.compile(r"[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}")
+
+
 class CLI:
-    def __init__(self):
+    def __init__(self, profile: str = "default", agent: str = None):
         parser = argparse.ArgumentParser(prog="doover", description="Tools for helping with doover.")
         parser.add_argument("--version", action="version", version=f"doover {__version__.__version__}")
         parser.set_defaults(callback=parser.print_help)
@@ -31,13 +60,18 @@ class CLI:
         self.args = args = parser.parse_args()
 
         self.config_manager = ConfigManager()
-        self.config_manager.current_profile = getattr(args, "profile", "default")
+        self.config_manager.current_profile = getattr(args, "profile", profile)
         self.api: Optional[Client] = None
 
         if hasattr(args, "agent_id"):
-            self.agent_id = args.agent_id if args.agent_id != "default" else None
+            self.agent_id = args.agent_id if args.agent_id != "default" else agent
         else:
             self.agent_id = None
+
+        if hasattr(args, "agent"):
+            self.agent_query = args.agent if args.agent != "default" else None
+        else:
+            self.agent_query = None
 
         try:
             args.callback(**{
@@ -64,14 +98,17 @@ class CLI:
                     kwargs["default"] = param.default
                     kwargs["required"] = False
                     param_name = "--" + param_name
-                if param.annotation is not inspect.Parameter.empty:
+
+                if param.annotation is parsers.BoolFlag:
+                    kwargs["action"] = "store_false" if kwargs["default"] is True else "store_true"
+                elif param.annotation is not inspect.Parameter.empty:
                     kwargs["type"] = param.annotation
 
                 parser.add_argument(param_name, **kwargs)
 
             if func._command_setup_api:
                 parser.add_argument("--profile", help="Config profile to use.", default="default")
-                parser.add_argument("--agent-id", help="Agent ID to use for this request.", default="default")
+                parser.add_argument("--agent", help="Agent query string (name or ID) to use for this request.", type=str, default="default")
 
             parser.add_argument("--enable-traceback", help=argparse.SUPPRESS, default=False, action="store_true")
 
@@ -93,10 +130,48 @@ class CLI:
             config.token,
             config.token_expires,
             config.base_url,
+            self.agent_id,
             login_callback=self.on_api_login,
         )
         if not (config.token and config.token_expires > datetime.utcnow()):
             self.api.login()
+
+        if self.agent_query is not None:
+            self.agent = self.resolve_agent_query(self.agent_query)
+            if self.agent is not None:
+                self.agent_id = self.api.agent_id = self.agent and self.agent.id
+        else:
+            self.agent = None
+
+    def resolve_agent_query(self, query_string: str):
+        id_match = KEY_MATCH.search(query_string)
+        if id_match:
+            return self.api.get_agent(id_match.group(0))
+
+        if not (process or TerminalMenu):
+            print("Tried to use fuzzy matching without packages installed. "
+                  "Please pass an agent ID, or install the extra packages.")
+            return
+
+        print("Fetching agents...")
+        agents = {a.name: a for a in self.api.get_agent_list()}
+        matches = process.extractBests(query_string, agents.keys(), limit=5, score_cutoff=65)
+        if len(matches) == 0:
+            print(f"Could not resolve agent query: {query_string}. Using default user agent ID.")
+            return
+
+        if len(matches) == 1 or len([m for m in matches if m[1] == 100]):
+            agent_name, score = matches[0]
+            # quick route, no menu required
+            print(f"Using agent {agent_name} for API calls. (Query: {query_string}, Score: {score}%)")
+            return agents[agent_name]
+
+        options = [f"{m[0]} (Match: {m[1]}%)" for m in matches]
+        menu = TerminalMenu(options, title="Select an agent:")
+        selected = options[menu.show()]
+        agent_name = re.search(r"(.*) \(Match: \d+%\)", selected).group(1)
+        print(f"Using agent {agent_name} for API calls. (Query: {query_string})")
+        return agents[agent_name]
 
     def on_api_login(self):
         config: ConfigEntry = self.config_manager.current
@@ -116,6 +191,9 @@ class CLI:
 
         elif isinstance(exception, Forbidden):
             print("Uh-oh - you don't have access to that. Perhaps try a different Agent ID, or ask for permissions?")
+
+        elif isinstance(exception, PermissionError):
+            print("Looks like you tried to do something to a file you don't have access to. Perhaps try with sudo?")
 
         else:
             print(f"Hmm... something went wrong: {exception}\n\nPerhaps you can understand more than me?")
@@ -240,10 +318,9 @@ class CLI:
         Processor Name: {proc.name}
         """
         fmt += f"""
-        Aggregate: {channel.aggregate}
+        Aggregate: {json.dumps(channel.aggregate, indent=4)}
         """
         return fmt
-
 
     @command(description="List available agents", setup_api=True)
     def get_agent_list(self):
@@ -254,7 +331,12 @@ class CLI:
     @command(description="Get channel info", setup_api=True)
     @annotate_arg("channel_name", "Channel name to get info for")
     def get_channel(self, channel_name: str):
-        channel = self.api.get_channel_named(channel_name, self.agent_id)
+        try:
+            channel = self.api.get_channel(channel_name)
+        except NotFound:
+            print(channel_name, self.agent_id)
+            channel = self.api.get_channel_named(channel_name, self.agent_id)
+
         print(self.format_channel_info(channel))
 
     @command(setup_api=True)
@@ -274,6 +356,71 @@ class CLI:
         task = self.api.create_task(task_name, self.agent_id, processor.id)
         print(f"Task created successfully. ID: {task.id}")
         print(self.format_channel_info(task))
+
+    @command(setup_api=True)
+    @annotate_arg("task_name", "Task channel name to create.")
+    @annotate_arg("package_path", "Path to the  processor package to publish")
+    @annotate_arg("channel_name", "[Optional] take the last message from this channel to start the task.")
+    @annotate_arg("csv_file", "[Optional] Path to a CSV export of messages to run the task on.")
+    @annotate_arg("parallel_processes", "[Optional] Number of parallel processes to run the task with.")
+    @annotate_arg("dry_run", "Whether to run the task without invoking it.")
+    def invoke_local_task(self,
+                            task_name: parsers.task_name,
+                            package_path: pathlib.Path,
+                            channel_name: Optional[str] = None,
+                            csv_file: pathlib.Path = None,
+                            parallel_processes: int = None,
+                            dry_run: bool = False):
+        """Invoke a task locally."""
+        task_name = "!" + task_name.lstrip('!')
+        task = self.api.get_channel_named(task_name, self.agent_id)
+        if not isinstance(task, Task):
+            print("That wasn't a task channel. Try again?")
+            return
+        print(self.format_channel_info(task))
+
+        agent = self.api.get_agent(self.agent_id)
+
+        def run_for_single_message(msg_obj, *args, **kwargs):
+            if dry_run:
+                return "Dry run successful. Task not invoked."
+            msg_dict = msg_obj.to_dict() if msg_obj else None
+            task.invoke_locally(
+                package_path,
+                msg_dict,
+                {"deployment_config": agent.deployment_config}
+            )
+            output = f"Task invoked successfully. Message ID: {msg_obj.id if msg_obj else None}."
+            if kwargs:
+                output = output + f" Extra kwargs: {kwargs}"
+            return output
+
+        if csv_file is not None:
+            messages = Message.from_csv_export(self.api, csv_file)
+            print(f"Loaded {len(messages)} messages from CSV export.")
+
+            if not parallel_processes or parallel_processes == 1:
+                for msg in messages:
+                    print(f"\nRunning task for message: {msg.id}, with timestamp: {msg.timestamp}. {messages.index(msg) + 1}/{len(messages)}\n")
+                    run_for_single_message(msg)
+            else:
+                with ThreadPoolExecutor(max_workers=parallel_processes) as executor:
+                    futures = [executor.submit(run_for_single_message, msg, task_num=messages.index(msg), total_tasks=len(messages)) for msg in messages]
+                    for future in as_completed(futures):
+                        print(future.result())
+
+        else:
+
+            msg_obj = None
+            if channel_name:
+                channel = self.api.get_channel_named(channel_name, self.agent_id)
+                msg_obj = channel.last_message
+
+            if not msg_obj:
+                print("No message found. running task without a message.")
+            else:
+                print(f"\nRunning task for message: {msg_obj.id}, with timestamp: {msg_obj.timestamp}\n")
+            run_for_single_message(msg_obj)
 
     @command(setup_api=True)
     def create_processor(self, processor_name: parsers.processor_name):
@@ -430,10 +577,189 @@ class CLI:
 
         for entry in data.get("deployment_channel_messages", []):
             channel = self.api.create_channel(entry["channel_name"], self.agent_id)
-            channel.publish(entry["channel_message"])
+            save_log = entry.get("save_log", True)
+            channel.publish(entry["channel_message"], save_log=save_log)
             print(f"Published message to {channel.name}")
 
         print("Successfully deployed config.")
+
+    @command(description="Update doover CLI to the latest version")
+    @annotate_arg("onefile", "Whether to use the one-file version of the CLI. Defaults to False.")
+    def update_cli(self, onefile: parsers.BoolFlag = False):
+        machine_type = platform.machine().lower()
+
+        if machine_type in ("i386", "amd64", "x86_64"):
+            arch_fmt = "amd64"
+        elif machine_type in ("arm64", "aarch64"):
+            arch_fmt = "arm64"
+        elif "armv7" in machine_type:
+            arch_fmt = "armv7"
+        else:
+            print("Unsupported system architecture.")
+            return
+
+        mapping = {
+            "linux": "linux",
+            "darwin": "macos",
+            "windows": "win",
+        }
+        os_fmt = mapping.get(platform.system().lower())
+        if not os_fmt:
+            print("Unsupported operating system.")
+            return
+
+        print(f"Detected system architecture as OS: {os_fmt}, Architecture: {arch_fmt}. Now fetching CLI.")
+
+        if onefile:
+            print("Fetching one-file CLI.")
+            resp = requests.get(S3_CLI_PATH_ONEFILE.format(os=os_fmt, arch=arch_fmt))
+
+            try:
+                os.unlink(BIN_FP)
+            except OSError:
+                pass
+
+            with open(BIN_FP, "wb") as fp:
+                fp.write(resp.content)
+
+            st = os.stat(BIN_FP)
+            os.chmod(BIN_FP, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+        else:
+            resp = requests.get(S3_CLI_PATH.format(os=os_fmt, arch=arch_fmt), stream=True)
+            file = tarfile.open(fileobj=resp.raw, mode="r|gz")
+            tmp_fp = f"/tmp/doover-cli-{uuid.uuid4()}"
+            file.extractall(tmp_fp)
+
+            # this is a bit dodgy because we're removing the directory from which (more than likely) this command was
+            # called and replacing it, while running the same command from that directory. During testing it didn't
+            # break, but has capability to corrupt the installer. Worst case the user will just have to manually
+            # re-update the CLI using the (independent) installer commands (ie. wget ... && extract ...)
+            if os.path.exists(CLI_DIR_PATH):
+                print("Removed old doover-cli directory in /usr/local.")
+                shutil.rmtree(CLI_DIR_PATH)
+
+            shutil.move(tmp_fp, CLI_DIR_PATH)
+
+            try:
+                os.remove(tmp_fp)
+                os.remove(BIN_FP)
+                print("Removed old one-file CLI version.")
+            except OSError:
+                pass
+
+            try:
+                os.symlink(f"{CLI_DIR_PATH}/doover", BIN_FP)
+                print("Successfully made symlink to doover cli executable.")
+            except FileExistsError:
+                print("Symlink already exists, skipping...")
+
+        print("Successfully updated doover CLI to latest version.")
+
+    @staticmethod
+    def _get_ip():
+        return requests.get("https://api.ipify.org").text
+
+    def _open_tunnel(
+        self, address: str, protocol: str, domain: str, timeout: int,
+        restrict_cidr: bool = True, wait_for_open: bool = True
+    ) -> str:
+        channel = self.api.get_channel_named("tunnels", self.agent_id)
+        print("Checking for existing tunnel...")
+        tunnel_url = channel.get_tunnel_url(address)
+        if tunnel_url:
+            print(f"Found existing tunnel URL: {tunnel_url}...")
+            return tunnel_url
+
+        print("No tunnel found. Opening tunnel... Please wait...")
+
+        data = {
+            "to_open": [{
+                "address": address,
+                "protocol": protocol,
+                "timeout": timeout,
+                "domain": protocol == "http" and domain or None,
+                "remote_addr": protocol == "tcp" and domain or None,
+                "allow_cidr": restrict_cidr and [self._get_ip()] or [],
+            }]
+        }
+        channel.publish(data)
+
+        if not wait_for_open:
+            return
+
+        while True:
+            time.sleep(1)
+            print("Checking for open tunnels...")
+            channel.update()
+            tunnel_url = channel.get_tunnel_url(address)
+            if tunnel_url:
+                print(f"Successfully opened tunnel: {tunnel_url}")
+                return tunnel_url
+
+    @command(description="Open an SSH tunnel for a doover agent", setup_api=True)
+    def open_ssh_tunnel(self, timeout: int = 15, restrict_cidr: bool = True, domain: str = None):
+        tunnel_url = self._open_tunnel("127.0.0.1:22", "tcp", domain, timeout, restrict_cidr, wait_for_open=True)
+
+        match = TUNNEL_URI_MATCH.match(tunnel_url)
+        if not match:
+            print("Tunnel URL was invalid.")
+            return
+
+        host = match.group("host")
+        port = match.group("port")
+        protocol = match.group("protocol")
+
+        if protocol != "tcp":
+            print("Only TCP-based SSH tunnels are supported.")
+            return
+
+        username = input("Please enter your SSH username: ")
+
+        print(f"Opening SSH session with host: {host}, port: {port}, username: {username}...")
+        os.execl("/usr/bin/ssh", "ssh", f"{username}@{host}", "-p", port)
+
+    @command(description="Open an arbitrary tunnel for a doover agent", setup_api=True)
+    def open_tunnel(self, address: str, domain: str = None, protocol: str = "http", timeout: int = 15, restrict_cidr: bool = True):
+        if domain is None:
+            if protocol == "http":
+                domain = "n1.doover.ngrok.app"
+            elif protocol == "tcp":
+                domain = "1.tcp.au.ngrok.io:27735"
+
+        self._open_tunnel(address, protocol, domain, timeout, restrict_cidr, wait_for_open=True)
+
+    @command(description="Close all tunnels for a doover agent", setup_api=True)
+    def close_all_tunnels(self):
+        channel = self.api.get_channel_named("tunnels", self.agent_id)
+        channel.publish({"to_close": channel.aggregate["open"]})
+        print("Successfully closed all tunnels.")
+
+    @command(description="Create new tunnel endpoints for an agent", setup_api=True)
+    def create_tunnel_endpoints(self, endpoint_type: str = "tcp", amount: int = 1):
+        if endpoint_type not in ("tcp", "http"):
+            print("Endpoint type must be either tcp or http.")
+            return
+
+        if amount < 1:
+            print("Amount must be a number greater than or equal to 1.")
+            return
+
+        data = self.api.create_tunnel_endpoints(self.agent_id, endpoint_type, amount)
+        for d in data:
+            print(f"Created new {endpoint_type} endpoint: {d}")
+
+        channel = self.api.get_channel_named("tunnels", self.agent_id)
+        key = f"{endpoint_type}_endpoints"
+        channel.publish({key: channel.aggregate.get(key, []) + data})
+
+    @command(description="List ngrok tunnel endpoints for an agent", setup_api=True)
+    def list_tunnel_endpoints(self):
+        tcp = self.api.get_tunnel_endpoints(self.agent_id, "tcp")
+        http = self.api.get_tunnel_endpoints(self.agent_id, "http")
+
+        print(f"HTTP Endpoints\n==============\n" + '\n'.join(http))
+        print(f"TCP Endpoints\n=============\n" + '\n'.join(tcp))
 
 
     def main(self):
